@@ -1,10 +1,16 @@
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -13,34 +19,79 @@ import java.util.stream.Stream;
  */
 
 public class App {
+	private static final int NUM_THREADS = 5;
+
 	public String getGreeting() {
 		return "Hello World!";
 	}
 
 	// Create a method for searching a file in a file tree
-	public static String searchFile(String fileName, String dirName) throws IOException {
-		// Use of NIO to list all files in the directory
+	public static String searchFile(String fileName, String dirName) throws Exception {
 		Path dir = Paths.get(dirName);
 
-		// Check if the file exists
 		List<Path> matches;
-		try (Stream<Path> walk = Files.walk(dir)) {
+		try (Stream<Path> walk = Files.walk(dir).parallel()) {
 			matches = walk
-					.filter(Files::isReadable) // read permission
-					.filter(Files::isRegularFile) // is a file
+					.filter(Files::isReadable)
+					.filter(Files::isRegularFile)
 					.filter(p -> p.getFileName().toString().equalsIgnoreCase(fileName))
 					.collect(Collectors.toList());
 		}
 
 		// If the file does not exist
 		if (matches.size() == 0) {
-			throw new FileNotFoundException("File does not exist in the directory");
+			throw new FileNotFoundException("File does not exist in the tree");
 		}
 
 		if (matches.size() > 1) {
-			throw new FileNotFoundException("Several files with the same name exist in the directory");
+			throw new Exception("Several files with the same name exist");
 		}
 		return matches.get(0).toString();
+	}
+
+	public static String alternativeSearch(String fileName, String dirName) throws IOException {
+		Path dir = Paths.get(dirName);
+
+		List<Path> files = new ArrayList<>();
+		try (Stream<Path> walk = Files.walk(dir)) {
+			files = walk
+					.parallel()
+					.filter(Files::isReadable)
+					.filter(Files::isRegularFile)
+					.collect(Collectors.toList());
+		}
+
+		AtomicInteger visits = new AtomicInteger(0);
+		ExecutorService executor = Executors.newFixedThreadPool(NUM_THREADS);
+		List<Callable<Path>> tasks = new ArrayList<>();
+		//Path lastDir = Paths.get("");
+		for (Path file : files) {
+			//if (file.getParent().toString() != lastDir.toString()) visits.incrementAndGet();
+			//lastDir = file.getParent();
+			Callable<Path> task = () -> {
+				if (file.getFileName().toString().equalsIgnoreCase(fileName)) {
+					return file;
+				} else {
+					return null;
+				}
+			};
+			tasks.add(task);
+		}
+
+		try {
+			List<Future<Path>> results = executor.invokeAll(tasks);
+			executor.shutdown();
+			for (Future<Path> result : results) {
+				Path match = result.get();
+				if (match != null) {
+					return match.toString() + ", visit count: " + visits;
+				}
+			}
+		} catch (InterruptedException | ExecutionException e) {
+			e.printStackTrace();
+		}
+
+		throw new FileNotFoundException("File does not exist in the directory");
 	}
 
 	// Create a directory with the app
@@ -58,31 +109,34 @@ public class App {
 		System.out.println("Directory created: " + directory);
 	}
 
-	public static String list(String dirName) {
-		StringBuilder sb = new StringBuilder();
-		Path dirPath = Path.of(dirName);
-		if (Files.exists(dirPath) && Files.isDirectory(dirPath)) {
-			File[] files = dirPath.toFile().listFiles();
-			for (File file : files) {
-				sb.append(file.getName()).append(" : ").append(file.length()).append(" bytes\n");
-			}
+	public static String getFileInfo(Path file){
+		try {
+			return file.getFileName()
+			+ " : " 
+			+ Files.size(file) 
+			+ " bytes\n";
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
-		return sb.toString();
+		return null;
 	}
-	//public static String list(String dirPath) throws IOException {
-	//	Path dir = Path.of(dirPath);
-	//	if (Files.exists(dir)) {
-	//		return Files.walk(dir)
-	//				.filter(Files::isDirectory)
-	//				.map(file -> file.getFileName() + " : " + Files.size(file) + " bytes\n")
-	//				.collect(Collectors.joining());
-	//	}
-	//	throw new FileNotFoundException("Directory does not exist");
-	//}
+	public static String list(String dirPath) throws IOException {
+		Path dir = Path.of(dirPath);
+		if (Files.exists(dir)) {
+			return Files.walk(dir)
+				.map(App::getFileInfo)
+				.collect(Collectors.joining());
+		}
+		throw new FileNotFoundException("Directory does not exist");
+	}
 
-	public static void main(String[] args) throws IOException {
+	public static void main(String[] args) throws Exception {
 		if (args[0].equals("find")) {
 			System.out.println(searchFile(args[1], args[2]));
+			return;
+		}
+		if (args[0].equals("pfind")) {
+			System.out.println(alternativeSearch(args[1], args[2]));
 			return;
 		}
 		if (args[0].equals("ls")) {
@@ -94,5 +148,4 @@ public class App {
 			return;
 		}
 	}
-
 }

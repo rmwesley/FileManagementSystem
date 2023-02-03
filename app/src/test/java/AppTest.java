@@ -15,7 +15,7 @@ class AppTest {
         App classUnderTest = new App();
         assertNotNull(classUnderTest.getGreeting(), "app should have a greeting");
     }
-    @Test void appFinds() throws IOException{
+    @Test void appFinds() throws Exception{
         assertEquals("resources/dir3/file2", App.searchFile("file2", "resources"));
     }
     @Test void appCreatesDir() throws IOException{
